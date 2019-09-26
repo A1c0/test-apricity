@@ -1,0 +1,13 @@
+{
+  "name": "test-apricity",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "https://github.com/A1c0/test-apricity.git",
+  "author": "Alexandre Contassot <alexandrecontassot@hotmail.fr>",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.17.1",
+    "ramda": "^0.26.1",
+    "sqlite3": "^4.1.0"
+  }
+}
