@@ -1,38 +1,40 @@
 const R = require('ramda');
 const sq = require('sqlite3');
 const express = require('express');
+const cors = require('cors');
 
 const app = express();
 app.use(express.json());
+app.use(cors());
 
-const db = new sq.Database('./us-census.db');
+const db = new sq.Database(__dirname + '/us-census.db');
 sq.verbose();
 
-const getDataFromSqlQuery = query =>
-  new Promise((resolve, reject) => {
-    db.all(query, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
+const getDataFromSqlQuery = R.curry(
+  (db, query) =>
+    new Promise((resolve, reject) => {
+      db.all(query, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    })
+);
 
-const getColumnName = () =>
+const getColumnName = db =>
   R.pipe(
-    getDataFromSqlQuery,
+    getDataFromSqlQuery(db),
     R.then(R.map(R.prop('name')))
   )('PRAGMA table_info(census_learn_sql)');
 
-const getMetricFromColumn = columnName =>
+const getMetricsFromColumn = R.curry((db, columnName) =>
   getDataFromSqlQuery(
-    `SELECT ${columnName} as "value", count(*) as "count", AVG(age) as "average age"
+    db,
+    `SELECT "${columnName}" as "value", count(*) as "count", AVG(age) as averageAge
     FROM census_learn_sql
-    GROUP BY ${columnName}
+    GROUP BY "${columnName}"
     ORDER BY count DESC`
-  );
-
-app.get('/getVariableNames', async function(req, res) {
-  res.send(await getColumnName());
-});
+  )
+);
 
 const isLimitReached = limit =>
   R.pipe(
@@ -40,31 +42,42 @@ const isLimitReached = limit =>
     R.lt(limit)
   );
 
-const getNotDisplayedMetrics = R.pipe(
+const getNonDisplayedMetrics = R.pipe(
   R.applySpec({
-    'non-displayed-values': R.length,
-    'non-displayed-lines': R.pipe(
+    nonDisplayedValues: R.length,
+    nonDisplayedLines: R.pipe(
       R.map(R.prop('count')),
       R.sum
     )
   })
 );
 
-const limitDataSent = limit =>
+const limitDataSent = (limit, data) =>
   R.pipe(
-    R.when(
+    R.ifElse(
       isLimitReached(limit),
       R.pipe(
         R.splitAt(limit),
-        R.over(R.lensIndex(1), getNotDisplayedMetrics),
-        R.zipObj(['displayData', 'notDisplayData'])
+        R.over(R.lensIndex(1), getNonDisplayedMetrics),
+        R.zipObj(['displayData', 'nonDisplayData'])
+      ),
+      R.pipe(
+        R.objOf('displayData'),
+        R.assoc('nonDisplayData', {
+          nonDisplayedValues: 0,
+          nonDisplayedLines: 0
+        })
       )
     )
-  );
+  )(data);
+
+app.get('/getVariableNames', async function(req, res) {
+  res.send(await getColumnName(db));
+});
 
 app.post('/getMetricFromColumn', async function(req, res) {
-  const response = await getMetricFromColumn(req.body.column);
-  if (req.body.max) res.send(limitDataSent(req.body.max)(response));
+  const response = await getMetricsFromColumn(db, req.body.column);
+  if (req.body.max) res.send(limitDataSent(req.body.max, response));
   else res.send(response);
 });
 
